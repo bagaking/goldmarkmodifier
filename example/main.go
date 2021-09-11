@@ -37,7 +37,7 @@ func main() {
 		),
 	)
 
-	mod := goldmarkmodifier.NewModifier(md, []byte(testFile))
+	mod := goldmarkmodifier.NewModifier(md, []byte(testFile), nil)
 	mod.Dump()
 
 	bDump := make([]byte, 0, 1000)
@@ -49,19 +49,19 @@ func main() {
 	head.AppendChild(head, mod.WarpText("wrapped head"))
 	mod.Root().AppendChild(mod.Root(), para)
 
-	mod.ReplaceNode(goldmarkmodifier.ParaRawTextCleaner)
+	mod.ReplaceNode(goldmarkmodifier.MCleanRawText())
 	mod.Dump()
 
-	mapperInsert := goldmarkmodifier.NewMapper(func(node ast.Node) bool {
+	mapperInsert := goldmarkmodifier.NewMapper(func(source []byte, node ast.Node) bool {
 		switch tn := node.(type) {
 		case *ast.Link:
-			text := tn.Text(mod.Source())
+			text := tn.Text(source)
 			if strs.StartsWith(string(text), "#") {
 				return true
 			}
 		}
 		return false
-	}, func(node ast.Node) []ast.Node {
+	}, func(source []byte, node ast.Node) []ast.Node {
 		newNode := mod.WrapNode([]byte(anotherFile))
 		aaaPara := ast.NewParagraph()
 		aaaPara.AppendChild(aaaPara, newNode)

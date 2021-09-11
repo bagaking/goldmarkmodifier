@@ -17,8 +17,10 @@ type (
 	}
 )
 
-func NewModifier(md goldmark.Markdown, source []byte) Modifier {
-	node := md.Parser().Parse(text.NewReader(source))
+func NewModifier(md goldmark.Markdown, source []byte, node ast.Node) Modifier {
+	if node == nil {
+		node = md.Parser().Parse(text.NewReader(source))
+	}
 	return Modifier{
 		source: source, node: node, md: md,
 	}
@@ -30,6 +32,14 @@ func (mod *Modifier) Root() ast.Node {
 
 func (mod *Modifier) Source() []byte {
 	return mod.source
+}
+
+func (mod *Modifier) Markdown() goldmark.Markdown {
+	return mod.md
+}
+
+func (mod *Modifier) CreateSubNodeModifier(node ast.Node) Modifier {
+	return NewModifier(mod.md, mod.source, node)
 }
 
 func (mod *Modifier) Render(w io.Writer) error {
@@ -96,24 +106,29 @@ func (mod *Modifier) ReplaceNode(rs ...Mapper) {
 		}
 
 		for _, r := range rs {
-			if !r.Matcher(node) {
+			if !r.Matcher(mod.source, node) {
 				continue
 			}
 
-			newNodes := r.Replacer(node)
-			parent, next := node.Parent(), node.NextSibling()
+			newNodes := r.Replacer(mod.source, node)
+			parent := node.Parent()
 			if parent == nil {
 				continue
 			}
 
-			cur := node
-			for _, n := range newNodes {
-				parent.InsertAfter(parent, cur, n)
-				cur = n
+			if len(newNodes) == 1 && newNodes[0] == node {
+				break // already be modified
 			}
 
+			nextSibling := node.NextSibling()
+			for _, n := range newNodes {
+				if n == node {
+					panic("you cannot just modify the node and insert it in a set") // which may cause the outter recursive in walk failed
+				}
+				parent.InsertBefore(parent, nextSibling, n)
+			}
 			parent.RemoveChild(parent, node)
-			node.SetNextSibling(next)
+			node.SetNextSibling(nextSibling)
 			return ast.WalkSkipChildren, nil
 		}
 
