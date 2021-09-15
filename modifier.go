@@ -1,6 +1,7 @@
 package goldmarkmodifier
 
 import (
+	"errors"
 	"fmt"
 	"io"
 
@@ -11,46 +12,62 @@ import (
 
 type (
 	Modifier struct {
+		node ast.Node
+
+		ref *Modifier
+
 		md     goldmark.Markdown
 		source []byte
-		node   ast.Node
 	}
 )
 
-func NewModifier(md goldmark.Markdown, source []byte, node ast.Node) Modifier {
-	if node == nil {
-		node = md.Parser().Parse(text.NewReader(source))
-	}
-	return Modifier{
-		source: source, node: node, md: md,
-	}
+func CreateNodeAndModifierBySource(md goldmark.Markdown, source []byte) (*Modifier, error) {
+	node := md.Parser().Parse(text.NewReader(source))
+	return CreateModifierBySourceAndNode(md, source, node)
 }
 
-func (mod *Modifier) Root() ast.Node {
+func CreateModifierBySourceAndNode(md goldmark.Markdown, source []byte, node ast.Node) (*Modifier, error) {
+	if node == nil {
+		return nil, errors.New("node cannot by nil")
+	}
+	if source == nil {
+		return nil, errors.New("source cannot be empty")
+	}
+	return &Modifier{
+		source: source, node: node, md: md,
+	}, nil
+}
+
+func (mod *Modifier) Root() *Modifier {
+	if mod.ref == nil {
+		return mod
+	}
+	return mod.ref.Root()
+}
+
+func (mod *Modifier) Node() ast.Node {
 	return mod.node
 }
 
 func (mod *Modifier) Source() []byte {
-	return mod.source
+	return mod.Root().source
 }
 
 func (mod *Modifier) Markdown() goldmark.Markdown {
 	return mod.md
 }
 
-func (mod *Modifier) CreateSubNodeModifier(node ast.Node) Modifier {
-	return NewModifier(mod.md, mod.source, node)
-}
-
 func (mod *Modifier) Render(w io.Writer) error {
-	return mod.md.Renderer().Render(w, mod.source, mod.node)
+	return mod.Markdown().Renderer().Render(w, mod.Source(), mod.Node())
 }
 
+// todo: using hash code to determine whether a node is belong to the modifier tree?
 func (mod *Modifier) insertSource(source []byte) (from, to int) {
-	orgLen := len(mod.source)
+	root := mod.Root()
+	orgLen := len(root.source)
 	from, to = orgLen, orgLen+len(source)
 	if from < to {
-		mod.source = append(mod.source, source...)
+		root.source = append(root.source, source...)
 	} else {
 		to = from
 	}
@@ -65,11 +82,11 @@ func (mod *Modifier) WarpText(source string) ast.Node {
 	return nd
 }
 
-func (mod *Modifier) WrapNode(source []byte) ast.Node {
-	node := mod.md.Parser().Parse(text.NewReader(source))
+func (mod *Modifier) WrapNode(source []byte) (ast.Node, error) {
+	node := mod.Markdown().Parser().Parse(text.NewReader(source))
 	from, _ := mod.insertSource(source)
 
-	ast.Walk(node, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+	err := ast.Walk(node, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
 		if entering {
 			return ast.WalkContinue, nil
 		}
@@ -90,27 +107,46 @@ func (mod *Modifier) WrapNode(source []byte) ast.Node {
 		}
 		return ast.WalkContinue, nil
 	})
-	return node
+	if err != nil {
+		return nil, err
+	}
+	return node, nil
+}
+
+func (mod *Modifier) WrapModifier(source []byte) (*Modifier, error) {
+	node, err := mod.WrapNode(source)
+	if err != nil {
+		return nil, err
+	}
+	return mod.CreateSubNodeModifier(node)
+}
+
+func (mod *Modifier) CreateSubNodeModifier(node ast.Node) (*Modifier, error) {
+	m := &Modifier{
+		node: node, ref: mod.Root(),
+	}
+	m.ref = mod
+	return m, nil
 }
 
 func (mod *Modifier) Dump() {
 	fmt.Println("=== DUMP BEGIN ===")
-	mod.Root().Dump(mod.source, 2)
+	mod.Node().Dump(mod.source, 2)
 	fmt.Println("=== DUMP END ===")
 }
 
-func (mod *Modifier) ReplaceNode(rs ...Mapper) {
-	ast.Walk(mod.Root(), func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+func (mod *Modifier) ReplaceNode(rs ...Mapper) error {
+	return ast.Walk(mod.Node(), func(node ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
 			return ast.WalkContinue, nil
 		}
 
 		for _, r := range rs {
-			if !r.Matcher(mod.source, node) {
+			if !r.Matcher(mod.Source(), node) {
 				continue
 			}
 
-			newNodes := r.Replacer(mod.source, node)
+			newNodes := r.Replacer(mod.Source(), node)
 			parent := node.Parent()
 			if parent == nil {
 				continue

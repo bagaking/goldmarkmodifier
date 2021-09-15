@@ -24,7 +24,7 @@ contents
 var anotherFile = `
 ##### another file
 
-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy
 
 `
@@ -37,7 +37,10 @@ func main() {
 		),
 	)
 
-	mod := goldmarkmodifier.NewModifier(md, []byte(testFile), nil)
+	mod, err := goldmarkmodifier.CreateNodeAndModifierBySource(md, []byte(testFile))
+	if err != nil {
+		panic(err)
+	}
 	mod.Dump()
 
 	bDump := make([]byte, 0, 1000)
@@ -47,7 +50,7 @@ func main() {
 	head := ast.NewHeading(2)
 	para.AppendChild(para, head)
 	head.AppendChild(head, mod.WarpText("wrapped head"))
-	mod.Root().AppendChild(mod.Root(), para)
+	mod.Node().AppendChild(mod.Node(), para)
 
 	mod.ReplaceNode(goldmarkmodifier.MCleanRawText())
 	mod.Dump()
@@ -62,10 +65,13 @@ func main() {
 		}
 		return false
 	}, func(source []byte, node ast.Node) []ast.Node {
-		newNode := mod.WrapNode([]byte(anotherFile))
+		newNode, errWrap := mod.WrapNode([]byte(anotherFile))
+		if errWrap != nil {
+			panic(errWrap)
+		}
 		aaaPara := ast.NewParagraph()
 		aaaPara.AppendChild(aaaPara, newNode)
-		mod.Root().AppendChild(mod.Root(), aaaPara)
+		mod.Node().AppendChild(mod.Node(), aaaPara)
 		return []ast.Node{newNode}
 	})
 
